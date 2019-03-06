@@ -1,0 +1,15 @@
+version: '3'
+services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg11
+    container_name: timescaledb
+    ports:
+      - 5432:5432
+    volumes:
+      - timescaledb:/var/lib/postgresql/data
+      - ./challenge-data:/etc/challenge-data
+    environment:
+      POSTGRES_PASSWORD: password
+
+volumes:
+  timescaledb:
