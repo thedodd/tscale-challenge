@@ -106,7 +106,7 @@ func (c *Controller) Run() {
 	close(c.collectorChan)
 	<-c.collectorControlIn // Will block until connection is closed.
 
-	fmt.Println("Done.")
+	fmt.Println("\nDone.")
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -303,13 +303,11 @@ func runCli() error {
 		// Read in query params as needed.
 		var queryParams []*QueryParam
 		if filepath == "-" {
-			log.Println("Reading CSV query parameters from stdin.")
 			if err := gocsv.Unmarshal(bufio.NewReader(os.Stdin), &queryParams); err != nil {
 				return err
 			}
 		} else {
 			// Open the target CSV file.
-			log.Println("Attempting to open specified file for CSV query parameters.")
 			file, err := os.Open(filepath)
 			if err != nil {
 				return err

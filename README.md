@@ -58,3 +58,36 @@ docker-compose exec timescaledb psql -U postgres
 #### execute the cli
 You can execute the cli for this challenge by invoking in a few ways:
 - `go run main.go -f challenge-data/query_params.csv` this will build & run the program.
+
+**PLEASE NOTE:** if you are having compiler issues with your dependencies, you probably need to ensure that Go modules are enabled. Check out the basic troubleshooting info here.
+
+Here is direct copy and past of the output you should expect to see after running this program:
+
+```bash
+$ go run main.go -f challenge-data/query_params.csv
+
+### Main Benchmarks
+Total processing time: 5.574095105s
+# of queries executed: 200
+Min Query Time:        2.969226ms
+Max Query Time:        34.074854ms
+Median Query Time:     30.80508ms
+Average Query Time:    27.870475ms
+
+### Worker Stats
+// These stats show the number of workers spawned total as,
+// well as the number of queries performed per worker.
+Workers Spawned:    10
+Worker host_000006: 27
+Worker host_000007: 19
+Worker host_000002: 17
+Worker host_000003: 25
+Worker host_000005: 23
+Worker host_000000: 17
+Worker host_000008: 17
+Worker host_000004: 18
+Worker host_000001: 22
+Worker host_000009: 15
+
+Done.
+```
