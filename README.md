@@ -59,7 +59,7 @@ docker-compose exec timescaledb psql -U postgres
 You can execute the cli for this challenge by invoking in a few ways:
 - `go run main.go -f challenge-data/query_params.csv` this will build & run the program.
 
-**PLEASE NOTE:** if you are having compiler issues with your dependencies, you probably need to ensure that Go modules are enabled. Check out the basic troubleshooting info here.
+**PLEASE NOTE:** if you are having compiler issues with your dependencies, you probably need to ensure that Go modules are enabled. Check out the basic [troubleshooting info here](https://github.com/golang/go/wiki/Modules#what-are-some-general-things-i-can-spot-check-if-i-am-seeing-a-problem).
 
 Here is direct copy and past of the output you should expect to see after running this program:
 
