@@ -1,47 +1,33 @@
 package main
 
 import (
+	"bufio"
 	"fmt"
+	"log"
 	"os"
 	"time"
 
 	"github.com/go-pg/pg"
 	"github.com/gocarina/gocsv"
+	"github.com/urfave/cli"
 )
 
 /*
 TODO:
 - [ ] test builds without vendored deps or test out vendoring.
 - [ ] dump custom stats on number of goroutines spun up.
-­- [ ] Handle CSV as either STDIN or via a flag with the filename.
 - [ ] Unit / functional tests.
 */
 
 func main() {
-	file, err := os.Open("./challenge-data/query_params.csv")
-	if err != nil {
-		panic(err)
+	// Run the CLI.
+	if err := runCli(); err != nil {
+		log.Fatal(err)
 	}
-	defer file.Close()
-
-	// Load query params from file.
-	queryParams := []*QueryParam{}
-	if err := gocsv.UnmarshalFile(file, &queryParams); err != nil {
-		panic(err)
-	}
-
-	// Build a database connection.
-	db := pg.Connect(&pg.Options{
-		Addr:     "localhost:5432",
-		User:     "postgres",
-		Database: "cpu_usage",
-		PoolSize: 200,
-	})
-	defer db.Close()
-
-	// Build our controller and get things started.
-	NewController(db, queryParams).Run()
 }
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// Controller ////////////////////////////////////////////////////////////////////////////////////
 
 // WorkerMap is a type alias used by the Controller for worker communication & coordination.
 type WorkerMap map[string]*WorkerChannels
@@ -62,9 +48,6 @@ type WorkerChannels struct {
 	// a termination signal, it will close this channel once it is done.
 	ControlIn <-chan interface{}
 }
-
-//////////////////////////////////////////////////////////////////////////////////////////////////
-// Controller ////////////////////////////////////////////////////////////////////////////////////
 
 // Controller is the type which is used to delegate work to the workers & coordniate shutdown.
 type Controller struct {
@@ -149,7 +132,7 @@ func NewCollector(receiver <-chan Metrics, controlOut chan<- interface{}) *Colle
 // Run will run the collector's execution loop.
 func (c *Collector) Run() {
 	for sample := range c.receiver {
-		fmt.Printf("Metric received from %s\n", sample.Worker)
+		// fmt.Printf("Metric received from %s\n", sample.Worker)
 		c.AddMetrics(sample)
 	}
 
@@ -211,4 +194,67 @@ type CPUUsageModel struct {
 	Ts    time.Time
 	Host  string
 	Usage float32
+}
+
+//////////////////////////////////////////////////////////////////////////////////////////////////
+// Support Functions /////////////////////////////////////////////////////////////////////////////
+
+func runCli() error {
+	var filepath string
+
+	app := cli.NewApp()
+	app.Name = "tscli"
+	app.Usage = "A CLI implementing the TimeScaleDB interview challenge requirements."
+	app.Action = func(c *cli.Context) error {
+		// Read in query params as needed.
+		var queryParams []*QueryParam
+		if filepath == "-" {
+			log.Println("Reading CSV query parameters from stdin.")
+			if err := gocsv.Unmarshal(bufio.NewReader(os.Stdin), &queryParams); err != nil {
+				return err
+			}
+		} else {
+			// Open the target CSV file.
+			log.Println("Attempting to open specified file for CSV query parameters.")
+			file, err := os.Open(filepath)
+			if err != nil {
+				return err
+			}
+			defer file.Close()
+
+			// Load query params from file.
+			if err := gocsv.UnmarshalFile(file, &queryParams); err != nil {
+				return err
+			}
+		}
+
+		processChallengeData(queryParams)
+		return nil
+	}
+	app.Flags = []cli.Flag{
+		cli.StringFlag{
+			Name:        "f,file",
+			Usage:       "Specify a file to load with the challenge CSV query parameters. Leave unspecified to pass data in via stdin.",
+			Value:       "-",
+			Destination: &filepath,
+		},
+	}
+	return app.Run(os.Args)
+}
+
+func processChallengeData(queryParams []*QueryParam) {
+	// Build a database connection.
+	db := pg.Connect(&pg.Options{
+		Addr:     "localhost:5432",
+		User:     "postgres",
+		Database: "cpu_usage",
+		PoolSize: 200,
+	}).WithTimeout(time.Second * 5)
+	if db.PoolStats() == nil {
+		log.Fatal("Unable to establish connection to database.")
+	}
+	defer db.Close()
+
+	// Build our controller and get things started.
+	NewController(db, queryParams).Run()
 }
