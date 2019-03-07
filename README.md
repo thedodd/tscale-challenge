@@ -4,20 +4,20 @@ A CLI tool for the Timescale code challenge.
 
 The main objective of this tool is to "measure the processing time of each query and output benchmark stats once all queries have been run. In particular, we are looking for the # of queries run, the total processing time across all queries, the minimum query time (for a single query), the median query time, the average query time, and the maximum query time.
 
-Benchmark output needs to include:
-- # of queries run.
+**Benchmark output needs to include:**
+- num of queries run.
 - the total processing time across all queries.
 - the minimum query time (for a single query).
 - the median query time.
 - the average query time.
 - the maximum query time (for a single query).
 
-Queries have the following constraints:
+**Queries have the following constraints:**
 - Each query must return "the max cpu usage and min cpu usage of the given hostname for every minute in the time range specified by the start time and end time".
 - Each query should be executed by a concurrent worker.
 - Queries for the same hostname must be executed by the same worker each time (though, a single worker may execute for multiple hosts).
 
-The architecture of this CLI is as follows:
+**The architecture of this CLI is as follows:**
 - A central controller is used to parse each query param record.
 - Controller dispatches the query param to the appropriate worker for the host based on a simple map. It uses channels to send the query param to the worker.
 - A new worker is spun up per hostname.
