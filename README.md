@@ -56,38 +56,31 @@ docker-compose exec timescaledb psql -U postgres
 - Lastly, execute `docker-compose exec timescaledb psql -U postgres -d homework -c "\COPY cpu_usage FROM /etc/challenge-data/cpu_usage.csv CSV HEADER"` from the root of this repo. This will populate our `cpu_usage` hypertable with the challenge data.
 
 #### execute the cli
-You can execute the cli for this challenge by invoking in a few ways:
-- `go run main.go -f challenge-data/query_params.csv` this will build & run the program.
+```bash
+# This will build & run the program.
+go run main.go -f challenge-data/query_params.csv
+
+# You can also specify `-w` to specify the number of workers to spawn.
+go run main.go -f challenge-data/query_params.csv -w 5
+
+# For more help on running the program, use --help.
+go run main.go --help
+```
 
 **PLEASE NOTE:** if you are having compiler issues with your dependencies, you probably need to ensure that Go modules are enabled. Check out the basic [troubleshooting info here](https://github.com/golang/go/wiki/Modules#what-are-some-general-things-i-can-spot-check-if-i-am-seeing-a-problem).
 
-Here is direct copy and past of the output you should expect to see after running this program:
+Here is an example of what the output will look like after running the program:
 
 ```bash
-$ go run main.go -f challenge-data/query_params.csv
+$ go run main.go -f challenge-data/query_params.csv -w 2
 
 ### Main Benchmarks
-Total processing time: 5.574095105s
-# of queries executed: 200
-Min Query Time:        2.969226ms
-Max Query Time:        34.074854ms
-Median Query Time:     30.80508ms
-Average Query Time:    27.870475ms
-
-### Worker Stats
-// These stats show the number of workers spawned total as,
-// well as the number of queries performed per worker.
-Workers Spawned:    10
-Worker host_000006: 27
-Worker host_000007: 19
-Worker host_000002: 17
-Worker host_000003: 25
-Worker host_000005: 23
-Worker host_000000: 17
-Worker host_000008: 17
-Worker host_000004: 18
-Worker host_000001: 22
-Worker host_000009: 15
+Total processing time:      751.64178ms
+Number of queries executed: 200
+Min Query Time:             2.345231ms
+Max Query Time:             7.853057ms
+Median Query Time:          3.079777ms
+Average Query Time:         3.758208ms
 
 Done.
 ```

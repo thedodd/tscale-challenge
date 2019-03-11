@@ -30,7 +30,7 @@ func main() {
 // Controller ////////////////////////////////////////////////////////////////////////////////////
 
 // WorkerMap is a type alias used by the Controller for worker communication & coordination.
-type WorkerMap map[string]*WorkerChannels
+type WorkerMap map[string]*WorkerHandle
 
 // QueryParam is a data struct used for deserializing query parameters.
 type QueryParam struct {
@@ -39,8 +39,8 @@ type QueryParam struct {
 	End   string `csv:"end_time"`
 }
 
-// WorkerChannels is a struct to keep track of communication channels between controller & worker.
-type WorkerChannels struct {
+// WorkerHandle is a struct to keep track of communication channels between controller & worker.
+type WorkerHandle struct {
 	// A channel for sending work out to a worker.
 	WorkOut chan<- *QueryParam
 
@@ -54,17 +54,21 @@ type Controller struct {
 	db                 *pg.DB
 	preparedQuery      *pg.Stmt
 	data               []*QueryParam
-	workers            WorkerMap
+	workers            []*WorkerHandle
+	workerMap          WorkerMap
 	collectorChan      chan WorkSample
 	collectorControlIn chan interface{}
+	numWorkers         uint64
+	lbIndex            int
 }
 
 // NewController will build a new controller instance.
-func NewController(db *pg.DB, data []*QueryParam, preparedQuery *pg.Stmt) *Controller {
-	workers := WorkerMap{}
+func NewController(db *pg.DB, data []*QueryParam, preparedQuery *pg.Stmt, numWorkers uint64) *Controller {
+	var workers []*WorkerHandle
+	workerMap := WorkerMap{}
 	collectorChan := make(chan WorkSample, 200)
 	collectorControlIn := make(chan interface{}, 0)
-	return &Controller{db, preparedQuery, data, workers, collectorChan, collectorControlIn}
+	return &Controller{db, preparedQuery, data, workers, workerMap, collectorChan, collectorControlIn, numWorkers, 0}
 }
 
 // Run will start the controller's main routine & will return once all work has finished.
@@ -74,21 +78,31 @@ func (c *Controller) Run() {
 
 	// Iterate over all query params and dispatch work.
 	for _, qp := range c.data {
-		if worker, ok := c.workers[qp.Host]; ok {
+		if worker, ok := c.workerMap[qp.Host]; ok {
 			// We already have a live worker, dispatch an event to it.
 			worker.WorkOut <- qp
 		} else {
-			// Build communication channels.
-			workChan := make(chan *QueryParam, 100)
-			controlChan := make(chan interface{}, 0)
+			// If we've spawned maximum number of workers, then load balance the
+			// new host accross currently spawned workers.
+			if c.numWorkers > 0 && len(c.workers) == int(c.numWorkers) {
+				channels := c.roundRobinSelect()
+				c.workerMap[qp.Host] = channels
+				channels.WorkOut <- qp
+			} else {
+				// Build communication channels.
+				workChan := make(chan *QueryParam, 100)
+				controlChan := make(chan interface{}, 0)
 
-			// Build the new worker and spawn it.
-			worker := &Worker{qp.Host, workChan, controlChan, c.collectorChan, c.preparedQuery}
-			go worker.Run()
+				// Build the new worker and spawn it.
+				worker := &Worker{workChan, controlChan, c.collectorChan, c.preparedQuery}
+				go worker.Run()
 
-			// Send the worker its first task.
-			c.workers[qp.Host] = &WorkerChannels{workChan, controlChan}
-			workChan <- qp
+				// Send the worker its first task.
+				channels := &WorkerHandle{workChan, controlChan}
+				c.workerMap[qp.Host] = channels
+				c.workers = append(c.workers, channels)
+				workChan <- qp
+			}
 		}
 	}
 
@@ -107,6 +121,19 @@ func (c *Controller) Run() {
 	<-c.collectorControlIn // Will block until connection is closed.
 
 	fmt.Println("\nDone.")
+}
+
+// roundRobinSelect will select an active worker from the pool of workers.
+func (c *Controller) roundRobinSelect() *WorkerHandle {
+	if len(c.workers) == c.lbIndex+1 {
+		// We've LB'd to the end of the slice, so set back to elem 0.
+		c.lbIndex = 0
+		return c.workers[0] // In theory, this could cause a panic, but we do a len check before ever calling this method.
+	} else {
+		channels := c.workers[c.lbIndex]
+		c.lbIndex++
+		return channels
+	}
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -128,7 +155,7 @@ type Collector struct {
 
 // NewCollector will build a new Collector instance.
 func NewCollector(receiver <-chan WorkSample, controlOut chan<- interface{}) *Collector {
-	return &Collector{receiver, controlOut, &DataStore{workerOps: map[string]uint64{}}}
+	return &Collector{receiver, controlOut, &DataStore{}}
 }
 
 // Run will run the collector's execution loop.
@@ -142,26 +169,17 @@ func (c *Collector) Run() {
 	median, average := c.calcMedianAndAverage()
 	fmt.Printf(`
 ### Main Benchmarks
-Total processing time: %s
-# of queries executed: %d
-Min Query Time:        %s
-Max Query Time:        %s
-Median Query Time:     %s
-Average Query Time:    %s
-
-### Worker Stats
-// These stats show the number of workers spawned total as,
-// well as the number of queries performed per worker.
-Workers Spawned:    %d
+Total processing time:      %s
+Number of queries executed: %d
+Min Query Time:             %s
+Max Query Time:             %s
+Median Query Time:          %s
+Average Query Time:         %s
 `,
 		c.data.totalProcessingTime.String(), c.data.numQueries,
 		c.data.minQueryTime.String(), c.data.maxQueryTime.String(),
-		median.String(), average.String(), len(c.data.workerOps),
+		median.String(), average.String(),
 	)
-
-	for key, val := range c.data.workerOps {
-		fmt.Printf("Worker %s: %d\n", key, val)
-	}
 
 	close(c.controlOut)
 }
@@ -184,13 +202,6 @@ func (c *Collector) AddWorkSample(sample WorkSample) {
 		c.data.maxQueryTime = &sample.OpTime
 	} else if sample.OpTime > *c.data.maxQueryTime {
 		c.data.maxQueryTime = &sample.OpTime
-	}
-
-	// Keep track of the number of ops run per worker.
-	if val, exists := c.data.workerOps[sample.Worker]; exists {
-		c.data.workerOps[sample.Worker] = val + 1
-	} else {
-		c.data.workerOps[sample.Worker] = 1
 	}
 }
 
@@ -224,9 +235,6 @@ type DataStore struct {
 	minQueryTime        *time.Duration // The smallest query time seen.
 	maxQueryTime        *time.Duration // The largest query time seen.
 	allQueryTimes       DurationSlice  // All query times, used for calculating median & average.
-
-	// A mapping of worker names (corresponds to 1 goroutine each) and number of tasks processed.
-	workerOps map[string]uint64
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
@@ -234,9 +242,6 @@ type DataStore struct {
 
 // Worker is used to perform database queries & creates needed stats to complete this challenge.
 type Worker struct {
-	// This workers name. This directly corresponds to the host it queries for.
-	name string
-
 	// Worker receives work requests here.
 	receiver <-chan *QueryParam
 
@@ -268,7 +273,7 @@ func (w *Worker) Run() {
 		opTime := stop.Sub(start)
 
 		// Report metrics to the collector.
-		w.collectorOut <- WorkSample{w.name, opTime}
+		w.collectorOut <- WorkSample{opTime}
 	}
 
 	close(w.controlOut)
@@ -276,9 +281,6 @@ func (w *Worker) Run() {
 
 // WorkSample is a data structure for recording the metrics on a query op from a worker.
 type WorkSample struct {
-	// The worker this metric came from.
-	Worker string
-
 	// The amount of time spent by the worker processing its query.
 	OpTime time.Duration
 }
@@ -295,6 +297,7 @@ type QueryModel struct {
 
 func runCli() error {
 	var filepath string
+	var numWorkers uint64
 
 	app := cli.NewApp()
 	app.Name = "tscli"
@@ -320,7 +323,7 @@ func runCli() error {
 			}
 		}
 
-		processChallengeData(queryParams)
+		processChallengeData(queryParams, numWorkers)
 		return nil
 	}
 	app.Flags = []cli.Flag{
@@ -330,11 +333,16 @@ func runCli() error {
 			Value:       "-",
 			Destination: &filepath,
 		},
+		cli.Uint64Flag{
+			Name:        "w,workers",
+			Usage:       "Specify the number of workers to use, must be >= 1 if specified. Leave unspecified to spawn a new worker per unique host.",
+			Destination: &numWorkers,
+		},
 	}
 	return app.Run(os.Args)
 }
 
-func processChallengeData(queryParams []*QueryParam) {
+func processChallengeData(queryParams []*QueryParam, numWorkers uint64) {
 	// Build a database connection.
 	db := pg.Connect(&pg.Options{
 		Addr:     "localhost:5432",
@@ -355,7 +363,7 @@ func processChallengeData(queryParams []*QueryParam) {
 	}
 
 	// Build our controller and get things started.
-	NewController(db, queryParams, preparedQuery).Run()
+	NewController(db, queryParams, preparedQuery, numWorkers).Run()
 }
 
 //////////////////////////////////////////////////////////////////////////////////////////////////
